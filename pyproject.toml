@@ -1,0 +1,49 @@
+[project]
+name = "heisenberg-trainer"
+version = "0.1.0"
+description = "AIOps 时序曲线图像的生成、标注与预览工具集"
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+dependencies = [
+    # 数据预处理 datas/aiops/preprocess.py
+    "numpy>=1.26",
+    # 时序图像生成 datas/aiops/generator
+    "matplotlib>=3.8",
+    "tqdm>=4.66",
+    "datasets>=5.1.0",
+    "trl>=1.14.2",
+    "tensorboard>=2.21.0",
+    "peft>=0.21.2",
+    # vLLM 加速 GRPO 生成（0.19.1 是最后一个 CUDA 12 构建，driver 535 兼容，认识 qwen3_5）
+    "vllm==0.19.1",
+    # torch 显式声明，确保从 PyTorch cu128 index 解析（vllm 0.19.1 传递依赖 torch==2.10.0 会匹配 +cu128）
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "torchaudio==2.10.0",
+]
+
+[tool.uv]
+# 脚本式项目，uv sync 只同步依赖，不作为可安装包构建
+package = false
+
+# PyTorch 官方 CUDA 12.8 index（torch/torchvision/torchaudio 必须从这里装，PyPI 只有 CPU 版）
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# 默认 PyPI（用阿里云镜像加速——USTC 对 vllm x86_64 wheel 403 重定向到清华，实际不可用）
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+# vllm 0.19.1 的 x86_64 wheel 是 manylinux_2_31（glibc 2.31），但本机 glibc 2.28，
+# uv 会因标签不匹配回退到源码构建（需 CUDA_HOME，失败）。
+# 已验证该 wheel 二进制实际只用 GLIBC 2.14（唯一超标的是 MoE 扩展的 log2 符号，
+# Qwen3.5 dense 模型不加载），故用本地 wheel 绕过标签检查。
+vllm = { path = "/tmp/vllm-0.19.1-cp38-abi3-manylinux_2_31_x86_64.whl" }

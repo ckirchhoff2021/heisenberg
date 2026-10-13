@@ -1,0 +1,78 @@
+# 基于现有 vllm-openai v0.27.2 镜像构建 trl + transformers 训练镜像
+# 基线: vei-public-cn-beijing.cr.volces.com/vllm/vllm-openai:v0.27.2 (镜像 ID b51ed4feae8a)
+# 已含: vllm 0.27.2rc1(cu129) + torch 2.13.0+cu129 + transformers 5.15.0 + accelerate 1.14.0 + flashinfer
+#       + nvidia-nccl-cu12 2.30.7 + nvidia-cudnn-cu12 9.20 + numpy/jinja2/packaging/dill/filelock/fsspec/pyyaml/tqdm/aiohttp/requests/rich/typer
+# 补装: trl (含 peft extra) + datasets 及其缺失的轻量运行时依赖
+#
+# 用途: 在容器内跑 trl GRPO/DPO/SFT 训练，vllm 0.27.2 可作 server 模式加速。
+#       vllm 0.27.2 在 trl 官方支持区间 [0.21, 0.31] 内，无需宿主机 0.19.1 那样的 start/finish_weight_update 补丁。
+
+FROM vei-public-cn-beijing.cr.volces.com/vllm/vllm-openai:v0.27.2
+
+# 关键：镜像默认 ENTRYPOINT 是 [vllm serve]，构建时 RUN 不受影响。
+# 训练场景用 bash 覆盖（见文末 ENTRYPOINT）。
+
+# 安装策略：
+#  0) 用阿里云 PyPI 源（官方 pypi.org 在本机仅 13KB/s 且超时，阿里云 2MB/s）
+#  1) 用 --no-deps 装 trl/peft/datasets 三个核心包，避免 pip 全量重解析 torch/nccl 生态
+#     （否则会错误地下载并降级 nvidia-nccl-cu12 293MB，且 cu12 与镜像 cu129 冲突）
+#  2) 单独精确安装 datasets 缺失的轻量运行时依赖（全部小包，无 nccl/cudnn 大块头）
+#
+# trl 1.15.0 依赖核对（均满足，不触发升级）：
+#   - vllm >=0.21,<=0.31 -> 0.27.2 ✅
+#   - transformers >=4.56.2 -> 5.15.0 ✅
+#   - accelerate >=1.4.0 -> 1.14.0 ✅
+# datasets 5.1.0 依赖核对（镜像已有多数，只缺下列）：
+#   - 已有: numpy 2.2.6 / dill 0.4.1 / filelock / fsspec / pyyaml / tqdm / packaging
+#   - 缺: pyarrow / pandas / xxhash / multiprocess
+#   - 需升级: huggingface-hub 1.27.0 -> >=1.31.0（但 transformers 5.15 要求 <2.0，故区间为 [1.31, 2.0)）
+
+RUN pip install --no-cache-dir --no-deps -i https://mirrors.aliyun.com/pypi/simple/ \
+        "trl==1.15.0" \
+        "peft==0.21.2" \
+        "datasets==5.1.0" \
+    && pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
+        "pyarrow>=24.0.0" \
+        "pandas" \
+        "xxhash" \
+        "multiprocess<0.70.20" \
+        "huggingface-hub>=1.31.0,<2.0"
+
+# 补丁：trl 1.15 把「vllm >= 0.28 用新 stateful 权重传输 API」的阈值硬编码为 0.28.0，
+# 但本镜像的 vllm 0.27.2rc1.dev122（cu129）已提前完成 PR #50902 的重构（静态方法改实例方法，
+# NCCLTrainerSendWeightsArgs 符号已删除），旧分支的 import 会报
+#   ImportError: cannot import name 'NCCLTrainerSendWeightsArgs' from 'vllm.distributed.weight_transfer.nccl_engine'
+# 而新分支需要的符号（nccl_common.trainer_init + packed_tensor.packed_nccl_broadcast_producer）在 0.27.2 已全部存在。
+# 因此把阈值降到 0.27.0，让 0.27.2 走新分支即可。
+RUN sed -i 's/_HAS_STATEFUL_TRAINER_ENGINE = is_vllm_available(min_version="0.28.0")/_HAS_STATEFUL_TRAINER_ENGINE = is_vllm_available(min_version="0.27.0")/' \
+    /usr/local/lib/python3.12/dist-packages/trl/generation/vllm_client.py
+
+# ---------------------------------------------------------------------------
+# Qwen3.5 GatedDeltaNet 线性注意力 kernel
+# ---------------------------------------------------------------------------
+# transformers 5.15 加载 Qwen3.5 时，若检测不到以下 kernel 会打 warning 并回退到
+# 慢速 PyTorch 参考实现（chunk_gated_delta_rule 慢 10x+）。补齐两个 kernel 消 warning + 提速：
+#
+# 1) flash-linear-attention (fla) —— 纯 Python + Triton JIT，直接 pip 装：
+#     提供 chunk_gated_delta_rule / recurrent_gated_delta_rule kernel
+# 2) causal-conv1d —— 需源码编译（官方 wheel 只发到 torch2.10/cu12，本镜像 torch 2.13+cu129）：
+#     提供 causal_conv1d_fn / causal_conv1d_update kernel
+#     - 官方 PyPI 只有 sdist，且 setup.py 默认会先尝试从 GitHub 下载预编译 wheel
+#       （guessing wheel URL，本机访问 GitHub 超时失败），必须用
+#       CAUSAL_CONV1D_FORCE_BUILD=TRUE 强制走本地 nvcc 编译
+#     - pyproject build-system 里写死 `torch` 依赖，pip 默认 build 隔离会重新下载 torch，
+#       故加 --no-build-isolation 复用镜像内已装的 torch 2.13 头文件 + nvcc 12.9 编译
+#     - 源码已 COPY 进 build context（docker/causal-conv1d-1.7.0.tar.gz），避免构建时访问 GitHub
+#
+COPY docker/causal-conv1d-1.7.0.tar.gz /tmp/causal-conv1d-1.7.0.tar.gz
+RUN CAUSAL_CONV1D_FORCE_BUILD=TRUE MAX_JOBS=8 \
+        pip install --no-cache-dir --no-build-isolation --no-deps \
+        /tmp/causal-conv1d-1.7.0.tar.gz \
+    && pip install --no-cache-dir --no-deps -i https://mirrors.aliyun.com/pypi/simple/ \
+        "flash-linear-attention==0.5.2" \
+        "fla-core==0.5.2" \
+    && rm -f /tmp/causal-conv1d-1.7.0.tar.gz
+
+# 训练场景默认用 bash 作为 entrypoint（覆盖原镜像的 vllm serve）
+ENTRYPOINT ["/bin/bash"]
+CMD []

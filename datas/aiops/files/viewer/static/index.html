@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据预览 · AIOps</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="bg-glow"></div>
+
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-logo">◈</span>
+            <div>
+                <h1>数据预览</h1>
+                <p>AIOps 时序曲线图像 · 标签浏览</p>
+            </div>
+        </div>
+        <div class="dataset-picker">
+            <label for="dataset">数据集</label>
+            <select id="dataset"></select>
+        </div>
+    </header>
+
+    <section class="filters glass">
+        <div class="filter-item">
+            <label for="filter-curve">curve</label>
+            <select id="filter-curve"><option value="">全部</option></select>
+        </div>
+        <div class="filter-item">
+            <label for="filter-recover">recover</label>
+            <select id="filter-recover"><option value="">全部</option></select>
+        </div>
+        <div class="filter-item">
+            <label for="filter-source">来源</label>
+            <select id="filter-source"><option value="">全部</option></select>
+        </div>
+        <div class="filter-item grow">
+            <label for="filter-q">搜索图像名</label>
+            <input id="filter-q" type="text" placeholder="输入文件名关键字…">
+        </div>
+        <button id="btn-reset" class="btn-reset">重置</button>
+    </section>
+
+    <div class="summary">
+        <span id="result-count" class="count-chip"></span>
+    </div>
+
+    <main id="grid" class="grid"></main>
+
+    <div class="load-more-wrap">
+        <button id="btn-more" class="btn-more">加载更多</button>
+    </div>
+
+    <div id="modal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-body glass">
+            <img id="modal-img" src="" alt="">
+            <div id="modal-meta" class="modal-meta"></div>
+            <button class="modal-close">×</button>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
