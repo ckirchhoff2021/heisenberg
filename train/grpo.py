@@ -49,21 +49,31 @@ FORMAT_REWARD_WEIGHT = 0.2
 CURVE_ACCURACY_REWARD_WEIGHT = 1.0
 RECOVER_ACCURACY_REWARD_WEIGHT = 0.5
 
-# 三级惩罚梯度（关键设计：保证 GRPO 组内 reward 几乎总有差异 → advantage 非零）
-# - 命中真值                    → +weight
-# - 输出具体但错误的标签        → WRONG_LABEL_PENALTY（小负，而非 0）
-#     原因：若「错误标签」给 0 分，4 条 completion 全错时组内 reward 全 0 → std=0
-#           → advantage 全 0 → 这一 group 白训（日志中 frac_reward_zero_std 高达 0.4 的根源）
-# - 输出 other / 空 / 非法标签  → OTHER_PENALTY（大负，逼模型别「遇到不确定就放弃」）
-WRONG_LABEL_PENALTY = -0.2
-OTHER_PENALTY = -0.5
+# 类平衡权重：纯 inverse-frequency（1/频率），归一化到均值 1。
+# 训练集 argos-trains.json 真实分布（3248 样本）：
+#   curve:   increase 809 / offset 698 / spike 643 / normal 583 / decline 290 / fluctuate 225
+#   recover: no_recover 1754 / recovered 927 / recovering 567
+# 目的：压制「无脑猜多数类」的 reward hacking。
+#   早期版本用三级负分（错误=-0.2 / other=-0.5），数学上「赌 increase+no_recover」
+#   的期望 reward = +0.477，远超「认真学判别」的 +0.029，优化器理性走了捷径
+#   （实测 checkpoint-1200：curve 22.5% < base 31.88%，normal 类 F1 归零，
+#     increase recall 飙到 0.67 —— 就是赌最大类的表现）。
+#   修正：错误一律 0 分（对齐 4B-RL 成功版本），命中时按 inverse-frequency 加权。
+#   纯 inv-freq 归一化后等价于 macro-F1 优化：每类 recall 等权，minority 类不再被淹没。
+#   数学验证：赌最优捷径 E=0.469（变成赌 spike/recovering 这种低命中组合）
+#            < 认真学 30% E=0.562，margin +0.093，捷径空间收窄 4 倍。
+#   （sqrt inv-freq 的 margin 仅 +0.022，太薄，不足以压制捷径。）
+CURVE_CLASS_WEIGHTS = {
+    "fluctuate": 1.928, "decline": 1.496, "spike": 0.675,
+    "normal": 0.744, "offset": 0.621, "increase": 0.536,
+    "other": 1.0,
+}
+RECOVER_CLASS_WEIGHTS = {
+    "no_recover": 0.501, "recovering": 1.55, "recovered": 0.948,
+    "other": 1.0,
+}
 
-# 逻辑一致性强约束（与 ground truth 无关，检查模型输出内部自洽性）
-# 数据验证 100% 确定：trend=normal ⟹ recover=recovered（583/583 样本无一例外）
-# trend=normal 但 recover≠recovered 是自相矛盾 → 独立惩罚，驱动模型学会标签配对
-CONSISTENCY_PENALTY = -0.3
-
-# 合法标签集合（与 prompt 定义一致，用于 format 校验与 other 判定）
+# 合法标签集合（与 prompt 定义一致，用于 format 校验）
 VALID_TREND_LABELS = {"normal", "offset", "increase", "decline", "spike", "fluctuate", "other"}
 VALID_RECOVER_LABELS = {"recovered", "recovering", "no_recover", "other"}
 
@@ -96,60 +106,35 @@ def format_reward_func(completions, **kwargs):
     ]
 
 
-def _tag_accuracy_reward(completions, ground_truth, pattern, weight, valid_labels):
+def _tag_accuracy_reward(completions, ground_truth, pattern, weight, class_weights):
     """Reward when the content of `pattern` matches the ground-truth label.
 
-    三级梯度（保证 GRPO 组内 reward 几乎总有差异 → advantage 非零）：
-    - 命中真值 → +weight
-    - 输出具体但错误的标签 → WRONG_LABEL_PENALTY（小负，而非 0，否则全错组 std=0 白训）
-    - 输出 `other` / 空 / 非法标签 → OTHER_PENALTY（大负，逼模型别放弃）
+    两级设计（对齐 4B-RL 成功版本）+ 类平衡加权：
+    - 命中真值 → +weight * class_weights[gt]（minority 类加权，压制赌多数类）
+    - 其余（错误标签 / other / 空 / 非法）→ 0
     """
     rewards = []
     for c, gt in zip(completions, ground_truth):
         pred = extract_tag_content(_completion_text(c), pattern)
         if pred == gt:
-            rewards.append(weight)
-        elif pred in valid_labels and pred != "other":
-            rewards.append(WRONG_LABEL_PENALTY)   # 具体但错误 → 小负
+            rewards.append(weight * class_weights.get(gt, 1.0))
         else:
-            rewards.append(OTHER_PENALTY)          # other / 空 / 非法 → 大负
+            rewards.append(0.0)
     return rewards
 
 
 def curve_accuracy_reward(completions, **kwargs):
     return _tag_accuracy_reward(
         completions, kwargs["curve"], RESULT_TAG_PATTERN,
-        CURVE_ACCURACY_REWARD_WEIGHT, VALID_TREND_LABELS,
+        CURVE_ACCURACY_REWARD_WEIGHT, CURVE_CLASS_WEIGHTS,
     )
 
 
 def recover_accuracy_reward(completions, **kwargs):
     return _tag_accuracy_reward(
         completions, kwargs["recover"], RECOVER_TAG_PATTERN,
-        RECOVER_ACCURACY_REWARD_WEIGHT, VALID_RECOVER_LABELS,
+        RECOVER_ACCURACY_REWARD_WEIGHT, RECOVER_CLASS_WEIGHTS,
     )
-
-
-def consistency_reward_func(completions, **kwargs):
-    """Reward for internal logical consistency of the model's output.
-
-    与 ground truth 无关，仅检查 trend/recover 两标签是否满足已知的硬约束：
-    - trend=normal ⟹ recover=recovered（数据 100% 确定，违反必错）
-
-    返回值语义：满足约束 → 0（不额外加分）；违反约束 → CONSISTENCY_PENALTY。
-    注意：只有「能提取到两个标签」时才检查；提取不到则让 tag 精度 reward 去惩罚。
-    """
-    rewards = []
-    for c in completions:
-        text = _completion_text(c)
-        trend = extract_tag_content(text, RESULT_TAG_PATTERN)
-        recover = extract_tag_content(text, RECOVER_TAG_PATTERN)
-        # 约束 1：trend=normal 必须 paired recovered（prompt 定义 + 数据 100% 确定）
-        if trend == "normal" and recover not in ("", "recovered"):
-            rewards.append(CONSISTENCY_PENALTY)
-        else:
-            rewards.append(0.0)
-    return rewards
 
 
 # --------------------------
@@ -216,6 +201,9 @@ def parse_args():
                         help="Learning rate")
     parser.add_argument("--num-generations", type=int, default=DEFAULT_NUM_GENERATIONS,
                         help="Number of completions per prompt")
+    parser.add_argument("--beta", type=float, default=0.0,
+                        help="KL regularization coefficient (0.0 disables KL; use ~0.02-0.04 to anchor policy "
+                             "to base model and prevent collapse-to-majority-class)")
     parser.add_argument("--max-completion-length", type=int, default=DEFAULT_MAX_COMPLETION_LENGTH,
                         help="Max completion length")
     parser.add_argument("--fp16", action="store_true",
@@ -228,6 +216,10 @@ def parse_args():
                         help="vLLM server base URL (required for server mode)")
     parser.add_argument("--vllm-group-port", type=int, default=51216,
                         help="NCCL weight transfer group port (server mode)")
+    parser.add_argument("--vllm-tensor-parallel-size", type=int, default=1,
+                        help="Tensor parallel size (colocate mode only; 1 = pure data parallel across ranks)")
+    parser.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.4,
+                        help="GPU memory utilization for the colocated vLLM engine (colocate mode only)")
     parser.add_argument("--report-to", type=str, default="tensorboard", choices=["tensorboard", "wandb", "none"],
                         help="Report training metrics to")
     
@@ -267,7 +259,10 @@ if __name__ == "__main__":
         vllm_mode=args.vllm_mode,
         vllm_server_base_url=args.vllm_server_base_url,
         vllm_group_port=args.vllm_group_port,
+        vllm_tensor_parallel_size=args.vllm_tensor_parallel_size,
+        vllm_gpu_memory_utilization=args.vllm_gpu_memory_utilization,
         num_generations=args.num_generations,
+        beta=args.beta,
         max_completion_length=args.max_completion_length,
         mask_truncated_completions=True,
         vllm_importance_sampling_correction=False,
@@ -279,7 +274,7 @@ if __name__ == "__main__":
     trainer = GRPOTrainer(
         model=base_model,
         processing_class=processor,
-        reward_funcs=[format_reward_func, curve_accuracy_reward, recover_accuracy_reward, consistency_reward_func],
+        reward_funcs=[format_reward_func, curve_accuracy_reward, recover_accuracy_reward],
         args=training_args,
         train_dataset=train_dataset,
     )

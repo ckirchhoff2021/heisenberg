@@ -76,26 +76,57 @@ def soft_loss(model, batch, brier_weight, perm_weight):
     return loss, {"ce": ce.detach(), "brier": brier.detach(), "acc": acc.detach()}
 
 
-def evaluate(model, dataset, device, brier_weight, amp_dtype, chunk=8):
+def evaluate(model, dataset, device, brier_weight, amp_dtype, chunk=2,
+             rank=0, world=1, distm=None):
+    """dev 评测；DDP 下按 rank 切分题目并行评测，再 all_reduce 汇总，避免空 rank 等 barrier 超时。"""
     model.eval()
-    stats = []
+    sums = {"ce": 0.0, "brier": 0.0, "acc": 0.0}
+    count = 0
+    starts = [s for i, s in enumerate(range(0, len(dataset), chunk)) if i % world == rank]
     with torch.inference_mode():
-        for start in range(0, len(dataset), chunk):
+        for start in starts:
             batch = move(dataset.collate([dataset[i] for i in range(start, min(start + chunk, len(dataset)))]), device)
             with torch.autocast(device_type=("cuda" if device.startswith("cuda") else "cpu"), dtype=amp_dtype):
                 _, s = soft_loss(model, batch, brier_weight, 0.0)
-            stats.append(s)
+            k = batch["cand_mask"].size(0)
+            for key in sums:
+                sums[key] += s[key].item() * k
+            count += k
+    totals = torch.tensor([sums["ce"], sums["brier"], sums["acc"], float(count)], device=device)
+    if world > 1:
+        distm.all_reduce(totals)
+    ce, brier, acc, n = totals.tolist()
     model.train()
-    return {k: torch.stack([s[k] for s in stats]).mean().item() for k in stats[0]}
+    return {"ce": ce / n, "brier": brier / n, "acc": acc / n}
 
 
-def microbatches(dataset, microbatch, seed):
+def init_distributed():
+    """torchrun 环境下初始化 DDP；普通单进程启动时返回单卡占位值。"""
+    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+        import datetime
+        import torch.distributed as dist
+        rank = int(os.environ["RANK"])
+        world = int(os.environ["WORLD_SIZE"])
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        dist.init_process_group(backend="nccl", rank=rank, world_size=world,
+                                timeout=datetime.timedelta(minutes=30))
+        torch.cuda.set_device(local_rank)
+        return rank, world, local_rank, dist
+    return 0, 1, 0, None
+
+
+def microbatches(dataset, microbatch, seed, rank=0, world=1):
+    """每 epoch 洗牌后按 rank 切分问题；各 rank 微批数严格一致（DDP 同步要求）。"""
     rng = random.Random(seed)
     order = list(range(len(dataset)))
     while True:
         rng.shuffle(order)
-        for start in range(0, len(order) - microbatch + 1, microbatch):
-            yield dataset.collate([dataset[i] for i in order[start:start + microbatch]])
+        usable = (len(order) // (microbatch * world)) * microbatch * world
+        order = order[:usable]
+        per_rank = usable // world
+        mine = order[rank * per_rank:(rank + 1) * per_rank]
+        for start in range(0, len(mine) - microbatch + 1, microbatch):
+            yield dataset.collate([dataset[i] for i in mine[start:start + microbatch]])
 
 
 def main():
@@ -107,7 +138,7 @@ def main():
     parser.add_argument("--prompt-file", default=DEFAULT_PROMPT_FILE,
                         help="argos 数据注入的分类规则；传空字符串则不加 system")
     parser.add_argument("--limit", type=int, default=None, help="只取每个文件前 N 条 argos 记录（调试用）")
-    parser.add_argument("--output-dir", default="runs/jev")
+    parser.add_argument("--output-dir", default="outputs/jev")
     parser.add_argument("--max-steps", type=int, default=500)
     parser.add_argument("--microbatch", type=int, default=4, help="每个微批的问题数")
     parser.add_argument("--grad-accum", type=int, default=4)
@@ -123,11 +154,16 @@ def main():
     parser.add_argument("--max-pixels", type=int, default=DEFAULT_MAX_PIXELS)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--grad-checkpointing", action=argparse.BooleanOptionalAction, default=True,
+                        help="对 backbone 逐层梯度检查点（A40 显存下必须开启；--no-grad-checkpointing 关闭）")
     args = parser.parse_args()
 
+    rank, world, local_rank, dist = init_distributed()
+    is_main = rank == 0
     device = args.device
     if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = f"cuda:{local_rank}" if world > 1 else (
+            "cuda" if torch.cuda.is_available() else "cpu")
     amp_dtype = torch.bfloat16
     torch.manual_seed(args.seed)
     random.seed(args.seed)
@@ -144,6 +180,13 @@ def main():
                          image_processor, args.max_tokens, args.max_pixels, args.limit)
 
     model = JevModel(args.backbone, dtype=amp_dtype).to(device)
+    if args.grad_checkpointing:
+        # torch 参考 GDN kernel 28 层 fp32 中间矩阵在 autograd 下会 OOM，checkpoint 改为反向时重算
+        model.path_encoder.backbone.gradient_checkpointing_enable()
+    if world > 1:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank)
+    raw = model.module if world > 1 else model
     param_groups = [
         {"params": [p for n, p in model.named_parameters() if ".backbone." in n], "lr": args.backbone_lr},
         {"params": [p for n, p in model.named_parameters() if ".backbone." not in n], "lr": args.head_lr},
@@ -157,15 +200,17 @@ def main():
     )
 
     from torch.utils.tensorboard import SummaryWriter
-    writer = SummaryWriter(os.path.join(args.output_dir, "tb"))
-    batches = microbatches(train_ds, args.microbatch, args.seed)
+    writer = SummaryWriter(os.path.join(args.output_dir, "tb")) if is_main else None
+    batches = microbatches(train_ds, args.microbatch, args.seed, rank, world)
     device_type = "cuda" if device.startswith("cuda") else "cpu"
 
     best_ce, best_step = float("inf"), 0
     if dev_ds is not None:
-        base = evaluate(model, dev_ds, device, args.brier_weight, amp_dtype)
-        print(f"[initial] dev {base}", flush=True)
-        best_ce = base["ce"]
+        base = evaluate(raw, dev_ds, device, args.brier_weight, amp_dtype,
+                        rank=rank, world=world, distm=dist)
+        if is_main:
+            print(f"[initial] dev {base}", flush=True)
+            best_ce = base["ce"]
 
     start = time.monotonic()
     for step in range(1, steps + 1):
@@ -191,35 +236,43 @@ def main():
         optimizer.step()
         scheduler.step()
 
-        writer.add_scalar("train/loss", totals, step)
-        writer.add_scalar("train/grad_norm", grad_norm.item(), step)
-        for k, v in agg.items():
-            writer.add_scalar(f"train/{k}", v, step)
+        if is_main:
+            writer.add_scalar("train/loss", totals, step)
+            writer.add_scalar("train/grad_norm", grad_norm.item(), step)
+            for k, v in agg.items():
+                writer.add_scalar(f"train/{k}", v, step)
 
         record = {"step": step, "loss": round(totals, 4), "acc": round(agg["acc"], 4),
                   "seconds": round(time.monotonic() - start, 1)}
         if dev_ds is not None and step % args.eval_every == 0:
-            dev = evaluate(model, dev_ds, device, args.brier_weight, amp_dtype)
-            writer.add_scalar("dev/ce", dev["ce"], step)
-            writer.add_scalar("dev/acc", dev["acc"], step)
-            record["dev"] = dev
-            if dev["ce"] < best_ce:
-                best_ce, best_step = dev["ce"], step
-                torch.save({"state_dict": model.state_dict(), "step": step,
-                            "input_schema": "jev.multimodal.v1", "backbone": args.backbone,
-                            "max_pixels": args.max_pixels, "max_tokens": args.max_tokens},
-                           os.path.join(args.output_dir, "best.pt"))
-        print(record, flush=True)
+            dev = evaluate(raw, dev_ds, device, args.brier_weight, amp_dtype,
+                           rank=rank, world=world, distm=dist)
+            if is_main:
+                writer.add_scalar("dev/ce", dev["ce"], step)
+                writer.add_scalar("dev/acc", dev["acc"], step)
+                record["dev"] = dev
+                if dev["ce"] < best_ce:
+                    best_ce, best_step = dev["ce"], step
+                    torch.save({"state_dict": raw.state_dict(), "step": step,
+                                "input_schema": "jev.multimodal.v1", "backbone": args.backbone,
+                                "max_pixels": args.max_pixels, "max_tokens": args.max_tokens},
+                               os.path.join(args.output_dir, "best.pt"))
+        if is_main:
+            print(record, flush=True)
 
-    ckpt_path = os.path.join(args.output_dir, "best.pt")
-    if dev_ds is None:  # 无 dev 时保存最后一步
-        torch.save({"state_dict": model.state_dict(), "step": steps,
-                    "input_schema": "jev.multimodal.v1", "backbone": args.backbone},
-                   ckpt_path)
-        best_step = steps
-    writer.close()
-    checkpoint = ckpt_path if (dev_ds is None or best_step > 0) else None
-    print(f"done. best_step={best_step} best_dev_ce={best_ce:.4f} checkpoint={checkpoint}", flush=True)
+    if is_main:
+        ckpt_path = os.path.join(args.output_dir, "best.pt")
+        if dev_ds is None:  # 无 dev 时保存最后一步
+            torch.save({"state_dict": raw.state_dict(), "step": steps,
+                        "input_schema": "jev.multimodal.v1", "backbone": args.backbone},
+                       ckpt_path)
+            best_step = steps
+        writer.close()
+        checkpoint = ckpt_path if (dev_ds is None or best_step > 0) else None
+        print(f"done. best_step={best_step} best_dev_ce={best_ce:.4f} checkpoint={checkpoint}", flush=True)
+    if world > 1:
+        dist.barrier()
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

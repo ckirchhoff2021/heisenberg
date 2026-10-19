@@ -111,7 +111,7 @@ def calculate_metrics(all_curve_gt: List[str], all_curve_pred: List[str],
     return metrics
 
 
-def inference_local_vllm(model_path: str, valid_examples: List[Dict[str, Any]], max_new_tokens: int = 1024, batch_size: int = 32) -> List[str]:
+def inference_local_vllm(model_path: str, valid_examples: List[Dict[str, Any]], max_new_tokens: int = 1024, batch_size: int = 32, gpu_memory_utilization: float = 0.9, enforce_eager: bool = False) -> List[str]:
     """本地VLLM引擎批量推理，速度最快"""
     from vllm import LLM, SamplingParams
     
@@ -122,8 +122,9 @@ def inference_local_vllm(model_path: str, valid_examples: List[Dict[str, Any]], 
         trust_remote_code=True,
         tensor_parallel_size=1,
         dtype="bfloat16",
-        gpu_memory_utilization=0.9,
+        gpu_memory_utilization=gpu_memory_utilization,
         max_model_len=8192,
+        enforce_eager=enforce_eager,
         # 多模态配置
         limit_mm_per_prompt={"image": 1},
     )
@@ -216,6 +217,10 @@ def parse_args():
     # 本地模式参数
     parser.add_argument("--model-path", type=str, help="Path to trained model (for local mode)")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for local VLLM inference")
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.9,
+                        help="GPU memory fraction for local VLLM engine (lower if sharing GPU with training)")
+    parser.add_argument("--enforce-eager", action="store_true",
+                        help="Disable CUDA graph compilation (saves GPU memory, needed when sharing GPU)")
     
     # 远程模式参数
     parser.add_argument("--api-base", type=str, help="Remote VLLM API base URL, e.g. http://localhost:8000/v1")
@@ -242,7 +247,7 @@ if __name__ == "__main__":
     if args.mode == "local":
         if not args.model_path:
             raise ValueError("Please provide --model-path for local mode")
-        responses = inference_local_vllm(args.model_path, valid_examples, args.max_new_tokens, args.batch_size)
+        responses = inference_local_vllm(args.model_path, valid_examples, args.max_new_tokens, args.batch_size, args.gpu_memory_utilization, args.enforce_eager)
     else:  # remote
         if not args.api_base or not args.model_name:
             raise ValueError("Please provide --api-base and --model-name for remote mode")
