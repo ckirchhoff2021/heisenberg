@@ -126,9 +126,7 @@ $$
 **损失**：交叉熵（逼高正确类置信度）+ Brier 校准项（默认权重 0.1），另含默认关闭的置换一致性 KL：
 
 $$
-L = \underbrace{-\sum_k t_k\log p_k}_{\text{soft 交叉熵}}
-  + 0.1\underbrace{\sum_k (p_k - t_k)^2}_{\text{Brier}}
-  + w_{perm}\,\underbrace{KL(p\,\|\,p')}_{\text{置换 KL}}
+L = \underbrace{-\sum_k t_k\log p_k}_{\text{soft 交叉熵}} + 0.1\underbrace{\sum_k (p_k - t_k)^2}_{\text{Brier}} + w_{perm}\underbrace{KL(p \Vert p')}_{\text{置换 KL}}
 $$
 
 其中 `t` 为正确答案的 one-hot，`p'` 为候选顺序随机打乱后重新打分的分布。训练用两参组 AdamW（backbone `1e-5` / head `1e-4`）、warmup + cosine、梯度裁剪 1.0、bf16，按 **dev 交叉熵**选优保存 `best.pt`。
