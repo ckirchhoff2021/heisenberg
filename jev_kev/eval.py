@@ -15,8 +15,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from kev.model import load_tokenizer
-
 from .data import load_split_materialized
 from .model import build_model
 from .train import encode_record
@@ -75,7 +73,7 @@ def load_model_from_checkpoint(backbone, checkpoint_dir, device):
     checkpoint_dir 需是 kev 兼容布局：根目录有 adapter_config.json + adapter_model.safetensors
     + head.pt（Meta 格式，含 base/base_revision/head/lora/head_dim/weights_dtype）。
     """
-    from kev.checkpoint import Checkpoint
+    from .checkpoint import Checkpoint
     tok, model = Checkpoint(str(checkpoint_dir)).load(device)
     model.eval()
     return model, tok
@@ -91,7 +89,7 @@ def main():
     ap.add_argument("--out", default="", help="输出 JSON 路径（默认打印到 stdout）")
     a = ap.parse_args()
 
-    from kev.device import select
+    from .device import select
     dev = select(a.device, dtype=torch.bfloat16)
     autocast = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else contextlib.nullcontext()
 

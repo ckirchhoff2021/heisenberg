@@ -24,8 +24,8 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from kev.device import select
-from kev.model import MAX_STATE, MAX_BRANCH, MAX_PACKED
+from .device import select
+from .model import MAX_STATE, MAX_BRANCH, MAX_PACKED
 
 from .model import build_model
 from .data import load_split, load_split_materialized
@@ -99,7 +99,7 @@ def save_checkpoint(model, out: Path, step: int, backbone: str, revision: str | 
     """
     out.mkdir(parents=True, exist_ok=True)
     model.lm.save_pretrained(out)   # 直接存根目录：adapter_config.json + adapter_model.safetensors
-    from kev.checkpoint import Meta
+    from .checkpoint import Meta
     meta = Meta(base=backbone, base_revision=revision, lora=16, head_dim=256,
                 weights_dtype="bf16", weights="lora", head=model.head.state_dict(),
                 extra={"step": step})
@@ -154,7 +154,7 @@ def main():
     model.lm.config.use_cache = False
     tok = model.tokenizer if hasattr(model, "tokenizer") else None
     # DecisionModel 不存 tokenizer，用 load_tokenizer
-    from kev.model import load_tokenizer
+    from .model import load_tokenizer
     tok = load_tokenizer(a.backbone, revision=revision)
     print(f"device={dev} trainable params={sum(p.numel() for p in model.trainable_parameters())/1e6:.1f}M", flush=True)
 
