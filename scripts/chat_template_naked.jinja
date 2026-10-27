@@ -1,0 +1,16 @@
+{# 裸模板：复刻 train/opsd.py 的手动编码口径。
+   user content = [image][text]，直接输出 vision 占位符 + 文本，
+   不加 role 标记、不加 think 块、不加 generation prompt。
+   vLLM 会把 <|vision_start|><|image_pad|><|vision_end|> 展开成实际 vision token。
+#}
+{%- for message in messages %}
+    {%- if message.role == "user" %}
+        {%- for item in message.content %}
+            {%- if item.type == "image" or item.type == "image_url" or 'image' in item %}
+                {{- '<|vision_start|><|image_pad|><|vision_end|>' }}
+            {%- elif item.type == "text" %}
+                {{- item.text }}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+{%- endfor %}

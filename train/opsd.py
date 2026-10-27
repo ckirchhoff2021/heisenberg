@@ -59,7 +59,17 @@ VALID_RECOVER = {"recovered", "recovering", "no_recover", "other"}
 
 
 def gold_text(curve: str, recover: str) -> str:
+    """纯标签文本：SFT/CE target 与学生轨迹 fallback（学生输出格式不变）。"""
     return f"<trend>{curve}</trend>\n<recover>{recover}</recover>"
+
+
+def gold_text_annotated(curve: str, recover: str) -> str:
+    """带引导语的黄金标签：仅用于教师特权注入。
+
+    base 冻结模型不理解裸标签是「要复述的答案」，会主动答错（trend top1 恒 other）。
+    加「正确答案如下：」引导语后教师 top1 恢复正确（scripts/verify_gold_annotation.py）。
+    """
+    return f"正确答案如下：\n<trend>{curve}</trend>\n<recover>{recover}</recover>"
 
 
 def encode_image(img_path: str, image_processor, max_pixels: int):
@@ -178,11 +188,11 @@ def opsd_loss(holder, model, prompt_text, img_path, curve, recover,
         traj_ids = holder.tok.encode(gold_text(curve, recover), add_special_tokens=False)
         Lt = len(traj_ids)
 
-    # 2. 教师输入 = prompt + gold + traj；学生输入 = prompt + traj
-    gold_ids = holder.tok.encode(gold_text(curve, recover), add_special_tokens=False)
-    Lg = len(gold_ids)
+    # 2. 教师输入 = prompt + [引导语gold] + traj；学生输入 = prompt + traj
+    gold_ann_ids = holder.tok.encode(gold_text_annotated(curve, recover), add_special_tokens=False)
+    Lg = len(gold_ann_ids)
     student_ids = torch.tensor([prompt_ids + traj_ids], device=device)
-    teacher_ids = torch.tensor([prompt_ids + gold_ids + traj_ids], device=device)
+    teacher_ids = torch.tensor([prompt_ids + gold_ann_ids + traj_ids], device=device)
 
     # 3. 教师 forward（no_grad），轨迹 logits 在 [Lp+Lg-1, Lp+Lg-1+Lt)
     with torch.no_grad():
@@ -205,11 +215,12 @@ def opsd_loss(holder, model, prompt_text, img_path, curve, recover,
     loss = kl_loss
     info = {"kl": kl_loss.detach()}
 
-    # 6. 可选 hard CE
+    # 6. 可选 hard CE（target 用纯标签，保持学生输出格式不变）
     if sft_weight > 0:
+        gold_ids = holder.tok.encode(gold_text(curve, recover), add_special_tokens=False)
         sft_ids = torch.tensor([prompt_ids + gold_ids], device=device)
         sft_logits = holder.forward_logits(model, sft_ids, pv, gthw)
-        sft_logits = sft_logits[0, Lp - 1: Lp - 1 + Lg]
+        sft_logits = sft_logits[0, Lp - 1: Lp - 1 + len(gold_ids)]
         gold_t = torch.tensor(gold_ids, device=device)
         ce = F.cross_entropy(sft_logits, gold_t)
         loss = loss + sft_weight * ce
