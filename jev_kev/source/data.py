@@ -148,3 +148,111 @@ def load_split(split: str, prepared_dir: str) -> list[dict]:
 def load_split_materialized(split: str, prepared_dir: str) -> list[dict]:
     """加载并 materialize 一个 split，返回内部 record 列表（可直接 encode）。"""
     return [materialize(r) for r in load_split(split, prepared_dir)]
+
+
+# ---------------------------------------------------------------------------
+# argos 曲线分类数据（多模态）：每条记录一张图 -> trend/recover 两题
+# ---------------------------------------------------------------------------
+
+CURVE_CHOICES = ["normal", "offset", "increase", "decline", "spike", "fluctuate", "other"]
+RECOVER_CHOICES = ["recovered", "recovering", "no_recover", "other"]
+CURVE_QUESTION = "对比参考曲线，当前曲线的趋势（trend）属于哪一类？"
+RECOVER_QUESTION = "当前曲线相对基准水位的异常恢复状态（recover）属于哪一类？"
+
+
+def load_rule_prompt(path: str) -> str:
+    """读取判别式所需的任务/分类规则，去掉生成式专用的"输出格式"及之后。"""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    return text.split("# 输出格式")[0].strip()
+
+
+def argos_to_records(argos_path: str, files_root: str, prompt_file: str = "") -> list[dict]:
+    """argos (curve/recover/image/from) 记录 → kev 内部 record 列表。
+
+    每条 argos 记录（一张图）产出 1 个 record：state 含图像 + system 分类规则，
+    含 trend（7 选）、recover（4 选）两题，one-hot target（对齐 jev.py 的 one-hot）。
+
+    record 结构（可直接喂 model.encode）：
+      {"state": "<system 规则>", "images": ["<abs image path>"],
+       "questions": [{"instr", "options", "label", "target", "src", "qtype", "qid"}]}
+    """
+    import os
+    with open(argos_path, encoding="utf-8") as f:
+        rows = json.load(f)
+    system = load_rule_prompt(prompt_file) if prompt_file else ""
+    records = []
+    for r in rows:
+        img_path = os.path.join(files_root, r["from"], r["image"])
+        state = system  # 分类规则作为 state 文本；图像单独走 vision 块
+        trend_label = CURVE_CHOICES.index(r["curve"])
+        recover_label = RECOVER_CHOICES.index(r["recover"])
+        trend_tgt = [0.0] * len(CURVE_CHOICES)
+        trend_tgt[trend_label] = 1.0
+        recover_tgt = [0.0] * len(RECOVER_CHOICES)
+        recover_tgt[recover_label] = 1.0
+        records.append({
+            "state": state,
+            "images": [img_path],
+            "questions": [
+                {"instr": CURVE_QUESTION, "options": list(CURVE_CHOICES),
+                 "label": trend_label, "target": trend_tgt,
+                 "src": "argos", "qtype": "choice", "qid": "trend"},
+                {"instr": RECOVER_QUESTION, "options": list(RECOVER_CHOICES),
+                 "label": recover_label, "target": recover_tgt,
+                 "src": "argos", "qtype": "choice", "qid": "recover"},
+            ],
+        })
+    return records
+
+
+def load_argos_records(argos_path: str, files_root: str, prompt_file: str = "",
+                       limit: int | None = None) -> list[dict]:
+    """加载 argos 数据为 record 列表（可选 limit 只取前 N 条，调试用）。"""
+    recs = argos_to_records(argos_path, files_root, prompt_file)
+    return recs[:limit] if limit is not None else recs
+
+
+def load_mixed_records(mixed_path: str, split: str = "train",
+                       limit: int | None = None) -> list[dict]:
+    """加载 jev-mixed.json 混合数据集（单题格式）为 record 列表。
+
+    jev-mixed.json 每条记录 = 1 个 task_id + 1 个 answer（单标签），4 个任务
+    choices 长度各异：legacy_argos.trend=7 / recover=4 / noise_argos.trend=6 /
+    noise_kepler.trend=4。system 规则在 schema.systems，图像绝对路径 =
+    data_roots[source] + state.images[0]。
+
+    record 结构（直接喂 model.encode，单题）：
+      {"state": <system 规则>, "images": [<abs path>],
+       "questions": [{"instr", "options", "label", "target", "src", "qtype", "qid"}]}
+    """
+    import os
+    with open(mixed_path, encoding="utf-8") as f:
+        d = json.load(f)
+    schema = d["schema"]
+    records = []
+    for r in d["splits"][split]:
+        task_id = r["task_id"]
+        task = schema["tasks"][task_id]
+        source = r["meta"]["source"]
+        system = schema["systems"][task["system_ref"]]
+        data_root = schema["data_roots"][task["data_root_ref"]]
+        img_path = os.path.join(data_root, r["state"]["images"][0])
+        choices = task["choices"]
+        label = r["answer"]
+        target = [0.0] * len(choices)
+        target[label] = 1.0
+        records.append({
+            "state": system,
+            "images": [img_path],
+            "questions": [{
+                "instr": task["question"],
+                "options": list(choices),
+                "label": label,
+                "target": target,
+                "src": source,
+                "qtype": "choice",
+                "qid": task_id,
+            }],
+        })
+    return records[:limit] if limit is not None else records
