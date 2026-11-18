@@ -1,0 +1,177 @@
+{
+  "legacy_argos.recover": {
+    "n": 800,
+    "acc": 0.775,
+    "mean_conf": 0.8355,
+    "per_class": [
+      {
+        "label": "recovered",
+        "P": 0.887,
+        "R": 0.945,
+        "F1": 0.915,
+        "support": 200
+      },
+      {
+        "label": "recovering",
+        "P": 0.354,
+        "R": 0.215,
+        "F1": 0.268,
+        "support": 130
+      },
+      {
+        "label": "no_recover",
+        "P": 0.793,
+        "R": 0.857,
+        "F1": 0.824,
+        "support": 470
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  },
+  "legacy_argos.trend": {
+    "n": 800,
+    "acc": 0.8962,
+    "mean_conf": 0.9403,
+    "per_class": [
+      {
+        "label": "normal",
+        "P": 0.922,
+        "R": 0.901,
+        "F1": 0.911,
+        "support": 171
+      },
+      {
+        "label": "offset",
+        "P": 0.921,
+        "R": 0.903,
+        "F1": 0.911,
+        "support": 154
+      },
+      {
+        "label": "increase",
+        "P": 0.902,
+        "R": 0.85,
+        "F1": 0.875,
+        "support": 140
+      },
+      {
+        "label": "decline",
+        "P": 0.98,
+        "R": 0.971,
+        "F1": 0.975,
+        "support": 102
+      },
+      {
+        "label": "spike",
+        "P": 0.747,
+        "R": 0.943,
+        "F1": 0.833,
+        "support": 122
+      },
+      {
+        "label": "fluctuate",
+        "P": 0.958,
+        "R": 0.82,
+        "F1": 0.883,
+        "support": 111
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  },
+  "noise_argos.trend": {
+    "n": 610,
+    "acc": 0.8803,
+    "mean_conf": 0.911,
+    "per_class": [
+      {
+        "label": "up",
+        "P": 0.868,
+        "R": 0.962,
+        "F1": 0.912,
+        "support": 130
+      },
+      {
+        "label": "down",
+        "P": 0.908,
+        "R": 0.879,
+        "F1": 0.893,
+        "support": 124
+      },
+      {
+        "label": "spike",
+        "P": 0.961,
+        "R": 0.891,
+        "F1": 0.925,
+        "support": 55
+      },
+      {
+        "label": "same_trend",
+        "P": 0.873,
+        "R": 0.852,
+        "F1": 0.862,
+        "support": 169
+      },
+      {
+        "label": "noise",
+        "P": 0.846,
+        "R": 0.84,
+        "F1": 0.843,
+        "support": 131
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 1
+      }
+    ]
+  },
+  "noise_kepler.trend": {
+    "n": 390,
+    "acc": 0.8231,
+    "mean_conf": 0.9034,
+    "per_class": [
+      {
+        "label": "up",
+        "P": 0.918,
+        "R": 0.857,
+        "F1": 0.887,
+        "support": 105
+      },
+      {
+        "label": "down",
+        "P": 0.916,
+        "R": 0.879,
+        "F1": 0.897,
+        "support": 124
+      },
+      {
+        "label": "same_trend",
+        "P": 0.878,
+        "R": 0.758,
+        "F1": 0.813,
+        "support": 161
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  }
+}

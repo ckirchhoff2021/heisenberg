@@ -21,10 +21,12 @@
 
 | 模型 | 训练方式 | 总 acc | legacy.trend | legacy.recover | noise_argos.trend | noise_kepler.trend |
 |---|---|---|---|---|---|---|
+| **d3-flash-finetuned** | d3-flash 9B 微调（readout + LoRA，冻结 vision） | **0.8519** | 0.9050 | 0.7712 | 0.8951 | 0.8410 |
 | **d3-mini-finetuned** | d3-mini 微调（readout + LoRA，冻结 vision） | **0.8481** | 0.9075 | 0.7688 | 0.8770 | 0.8436 |
 | **jev_4b_mixed** | 4B LoRA + PointerHead，4任务混合 | **0.8442** | 0.8962 | 0.7750 | 0.8803 | 0.8231 |
 | **argos-only** | 4B LoRA + PointerHead，仅 legacy | 0.7292 | 0.9137 | 0.7550 | 0.5098 | 0.6410 |
 | **d3-mini** | 零样本（未训 argos） | 0.5677 | 0.4950 | 0.5775 | 0.6443 | 0.5769 |
+| **d3-flash** | 零样本（9B，未训 argos） | 0.5581 | 0.5850 | 0.5663 | 0.5623 | 0.4795 |
 
 ### 关键观察
 
@@ -71,6 +73,34 @@
 | legacy_argos.recover | 0.5775 | **recovering 0.031（130 个只对 4 个）** |
 | noise_argos.trend | 0.6443 | **noise 0.916 / spike 0.945 反而很强** |
 | noise_kepler.trend | 0.5769 | same_trend 0.255 |
+
+### 3.4 d3-flash（zero-shot，9B）
+
+| 任务 | acc | 关键盲区 |
+|---|---|---|
+| legacy_argos.trend | 0.5850 | increase 0.371 / spike 0.410 / fluctuate 0.559 |
+| legacy_argos.recover | 0.5663 | **recovering 0.008（130 个只对 1 个）** |
+| noise_argos.trend | 0.5623 | **noise 0.916 / spike 0.964 强**；down 0.339 / same_trend 0.379 弱 |
+| noise_kepler.trend | 0.4795 | **same_trend 0.199 崩塌** |
+
+> d3-flash（Qwen3.5-9B，readout 255×4096）零样本总 acc **0.5581**，与 d3-mini
+> （0.5677）几乎持平，甚至 noise_kepler 还略低（0.4795 vs 0.5769）。9B 更深的
+> 视觉塔（27 层 vs 24 层）未在「换 prompt 框架」的零样本场景兑现优势——进一步
+> 印证结论：领域规则知识（中文 argos 规则）才是决定精度的主因，模型规模不是。
+
+### 3.5 d3-flash（微调后，best_step=300）
+
+| 任务 | acc | correct/total |
+|---|---|---|
+| legacy_argos.trend | 0.9050 | 724/800 |
+| legacy_argos.recover | 0.7712 | 617/800 |
+| noise_argos.trend | 0.8951 | 546/610 |
+| noise_kepler.trend | 0.8410 | 328/390 |
+| **overall** | **0.8519** | **2215/2600** |
+
+> d3-flash 微调后总 acc **0.8519**（+29.4 点），成为当前最强基线，略超
+> d3-mini-finetuned（0.8481）与 jev_4b_mixed（0.8442）。9B 更大的 capacity
+> 在微调后兑现了优势（尤其 noise_argos 0.8951 vs d3-mini 0.8770）。
 
 ---
 
@@ -126,6 +156,8 @@ max-state 3072 / max-pixels 262144
 | 文件 | 内容 |
 |---|---|
 | `semantic_router/results/d3_mini_zero_shot_eval.json` | d3-mini zero-shot（本次新增） |
+| `semantic_router/results/d3_flash_zero_shot_eval.json` | d3-flash zero-shot（9B，本次新增） |
+| `semantic_router/results/d3_flash_finetuned_eval.json` | d3-flash 微调后（best_step=300，本次新增） |
 | `semantic_router/results/per_task_eval_jev_4b_mixed.json` | 混合模型 per-task |
 | `semantic_router/results/noise_eval_argos_only_4b.json` | argos-only noise 跨任务 |
 | `semantic_router/results/legacy_eval_argos_only_4b.json` | argos-only legacy 源任务 |
@@ -141,8 +173,9 @@ max-state 3072 / max-pixels 262144
 
 | 文件 | 用途 |
 |---|---|
-| `semantic_router/train_d3_mini.py` | d3-mini 微调入口（readout + LoRA，冻结 vision，4卡 DDP） |
-| `semantic_router/train_d3_mini_4gpu.sh` | 启动脚本（torchrun 4卡 + tee 日志落盘 + NCCL 超时兜底） |
+| `semantic_router/train_d3_mini.py` | d3 微调入口（readout + LoRA，冻结 vision，4卡 DDP，复用给 flash/mini） |
+| `semantic_router/train_d3_mini_4gpu.sh` | d3-mini 启动脚本（torchrun 4卡 + tee 日志落盘 + NCCL 超时兜底） |
+| `semantic_router/train_d3_flash_4gpu.sh` | d3-flash 启动脚本（同协议，仅换 d3-dir 与 output-dir） |
 
 训练产物：`outputs/d3_mini_finetuned/`（LoRA adapter 129MB + readout.safetensors 2.6MB + finetune_meta.pt + train.log）
 
@@ -185,7 +218,52 @@ lr 1e-4 / readout-lr 1e-4 / max-steps 500 / eval-every 100
 
 ---
 
-## 七、下一步建议
+## 七、d3-flash 微调实验（2026-11）
+
+### 7.1 训练配置
+
+```
+backbone = d3-flash 的 Qwen3.5-9B（完整 16.8GB 权重 + 255路 readout 255×4096）
+训练对象 = readout 头(255×4096) + LoRA r=16（冻结 vision）
+前向 = d3 noncausal_full_attention（PromptEncoder，训练模式可反传）
+batch 1 × world 4 × accum 8 = 32 record/step
+lr 1e-4 / readout-lr 1e-4 / max-steps 500 / eval-every 100
+可训练参数 44.3M（LoRA ~43.3M + readout 1.0M）
+单卡显存 ~36GB / 卡，每 step ~24s，500 步 ≈ 3.3 小时
+```
+
+### 7.2 训练曲线（dev 子集 256 条）
+
+| step | loss | dev_ce | dev_acc |
+|---|---|---|---|
+| initial | — | 1.1744 | 0.5625 |
+| 100 | 0.7843 | 0.5784 | 0.8047 |
+| 200 | 0.0666 | 0.4888 | 0.8203 |
+| 300 | 0.8776 | **0.4422** | 0.8359 |
+| 400 | 0.2785 | 0.4826 | 0.8008 |
+| 500 | 0.2403 | 0.4844 | 0.8125 |
+
+> best_step=300（按 dev_ce），step 400/500 ce 回升（0.4826/0.4844），有轻微过拟合。
+
+### 7.3 全量验证集结论（2600 条）
+
+| 任务 | acc | correct/total |
+|---|---|---|
+| legacy_argos.trend | 0.9050 | 724/800 |
+| legacy_argos.recover | 0.7712 | 617/800 |
+| noise_argos.trend | 0.8951 | 546/610 |
+| noise_kepler.trend | 0.8410 | 328/390 |
+| **overall** | **0.8519** | **2215/2600** |
+
+- d3-flash 微调后总 acc 从 zero-shot 的 **0.5581 提升到 0.8519**（+29.4 点），
+  成为当前最强基线，略超 d3-mini-finetuned（0.8481）与 jev_4b_mixed（0.8442）。
+- 9B 更大的 capacity 在微调后兑现优势，尤其 noise_argos.trend 0.8951（vs d3-mini 0.8770）。
+- 训练产物：`outputs/d3_flash_finetuned/`（LoRA adapter 173MB + readout.safetensors 4.2MB
+  + finetune_meta.pt + train.log），完整结果见 `results/d3_flash_finetuned_eval.json`。
+
+---
+
+## 八、下一步建议
 
 1. **验证 vLLM Semantic Router 加载自己的 checkpoint**：jev_4b_mixed 是 LoRA + PointerHead
    增量，需确认能否 merge 成完整权重后喂给 vLLM Semantic Router Engine mode。

@@ -1,0 +1,93 @@
+{
+  "legacy_argos.recover": {
+    "n": 800,
+    "acc": 0.755,
+    "mean_conf": 0.7502,
+    "per_class": [
+      {
+        "label": "recovered",
+        "P": 0.923,
+        "R": 0.835,
+        "F1": 0.877,
+        "support": 200
+      },
+      {
+        "label": "recovering",
+        "P": 0.173,
+        "R": 0.069,
+        "F1": 0.099,
+        "support": 130
+      },
+      {
+        "label": "no_recover",
+        "P": 0.755,
+        "R": 0.911,
+        "F1": 0.825,
+        "support": 470
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  },
+  "legacy_argos.trend": {
+    "n": 800,
+    "acc": 0.9137,
+    "mean_conf": 0.9027,
+    "per_class": [
+      {
+        "label": "normal",
+        "P": 0.905,
+        "R": 0.889,
+        "F1": 0.897,
+        "support": 171
+      },
+      {
+        "label": "offset",
+        "P": 0.891,
+        "R": 0.955,
+        "F1": 0.922,
+        "support": 154
+      },
+      {
+        "label": "increase",
+        "P": 0.914,
+        "R": 0.914,
+        "F1": 0.914,
+        "support": 140
+      },
+      {
+        "label": "decline",
+        "P": 0.98,
+        "R": 0.98,
+        "F1": 0.98,
+        "support": 102
+      },
+      {
+        "label": "spike",
+        "P": 0.879,
+        "R": 0.893,
+        "F1": 0.886,
+        "support": 122
+      },
+      {
+        "label": "fluctuate",
+        "P": 0.941,
+        "R": 0.856,
+        "F1": 0.896,
+        "support": 111
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  }
+}

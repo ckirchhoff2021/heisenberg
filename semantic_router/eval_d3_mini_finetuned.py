@@ -41,6 +41,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    sys.path.insert(0, args.d3_dir)  # d3 runtime 目录按 --d3-dir 动态加入（flash/mini 共用）
     from d3_runtime import D3, PromptEncoder
     from safetensors.torch import load_file
     from peft import PeftModel

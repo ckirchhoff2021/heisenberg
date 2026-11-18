@@ -1,0 +1,30 @@
+{
+  "model": "jev_4b_base (Qwen3.5-4B + random PointerHead, 未微调)",
+  "overall": {
+    "acc": 0.07961538461538462,
+    "correct": 207,
+    "total": 2600
+  },
+  "per_task": {
+    "legacy_argos.recover": {
+      "acc": 0.0675,
+      "correct": 54,
+      "total": 800
+    },
+    "legacy_argos.trend": {
+      "acc": 0.01,
+      "correct": 8,
+      "total": 800
+    },
+    "noise_argos.trend": {
+      "acc": 0.03442622950819672,
+      "correct": 21,
+      "total": 610
+    },
+    "noise_kepler.trend": {
+      "acc": 0.31794871794871793,
+      "correct": 124,
+      "total": 390
+    }
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "noise_argos.trend": {
+    "n": 610,
+    "acc": 0.5098,
+    "mean_conf": 0.7685,
+    "per_class": [
+      {
+        "label": "up",
+        "P": 0.461,
+        "R": 0.862,
+        "F1": 0.601,
+        "support": 130
+      },
+      {
+        "label": "down",
+        "P": 0.498,
+        "R": 0.823,
+        "F1": 0.62,
+        "support": 124
+      },
+      {
+        "label": "spike",
+        "P": 0.48,
+        "R": 0.873,
+        "F1": 0.619,
+        "support": 55
+      },
+      {
+        "label": "same_trend",
+        "P": 0.56,
+        "R": 0.083,
+        "F1": 0.144,
+        "support": 169
+      },
+      {
+        "label": "noise",
+        "P": 0.946,
+        "R": 0.267,
+        "F1": 0.417,
+        "support": 131
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 1
+      }
+    ]
+  },
+  "noise_kepler.trend": {
+    "n": 390,
+    "acc": 0.641,
+    "mean_conf": 0.896,
+    "per_class": [
+      {
+        "label": "up",
+        "P": 0.606,
+        "R": 0.924,
+        "F1": 0.732,
+        "support": 105
+      },
+      {
+        "label": "down",
+        "P": 0.619,
+        "R": 0.968,
+        "F1": 0.755,
+        "support": 124
+      },
+      {
+        "label": "same_trend",
+        "P": 0.917,
+        "R": 0.205,
+        "F1": 0.335,
+        "support": 161
+      },
+      {
+        "label": "other",
+        "P": 0.0,
+        "R": 0.0,
+        "F1": 0.0,
+        "support": 0
+      }
+    ]
+  }
+}

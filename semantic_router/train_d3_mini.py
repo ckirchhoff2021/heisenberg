@@ -260,6 +260,7 @@ def main():
     torch.manual_seed(args.seed)
     random.seed(args.seed)
 
+    sys.path.insert(0, args.d3_dir)  # d3 runtime 目录按 --d3-dir 动态加入（flash/mini 共用）
     from d3_runtime import D3
     d3_runner = D3.from_pretrained(args.d3_dir, device=device, verify="none",
                                    batch_size=8)

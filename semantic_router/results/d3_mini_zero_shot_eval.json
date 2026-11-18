@@ -1,0 +1,129 @@
+{
+  "model": "d3-mini",
+  "mode": "zero-shot (no argos training)",
+  "overall": {
+    "acc": 0.5676923076923077,
+    "correct": 1476,
+    "total": 2600
+  },
+  "per_task": {
+    "legacy_argos.recover": {
+      "acc": 0.5775,
+      "correct": 462,
+      "total": 800,
+      "per_class": {
+        "no_recover": {
+          "correct": 354,
+          "total": 470,
+          "acc": 0.7531914893617021
+        },
+        "recovered": {
+          "correct": 104,
+          "total": 200,
+          "acc": 0.52
+        },
+        "recovering": {
+          "correct": 4,
+          "total": 130,
+          "acc": 0.03076923076923077
+        }
+      }
+    },
+    "legacy_argos.trend": {
+      "acc": 0.495,
+      "correct": 396,
+      "total": 800,
+      "per_class": {
+        "decline": {
+          "correct": 80,
+          "total": 102,
+          "acc": 0.7843137254901961
+        },
+        "fluctuate": {
+          "correct": 98,
+          "total": 111,
+          "acc": 0.8828828828828829
+        },
+        "increase": {
+          "correct": 73,
+          "total": 140,
+          "acc": 0.5214285714285715
+        },
+        "normal": {
+          "correct": 73,
+          "total": 171,
+          "acc": 0.4269005847953216
+        },
+        "offset": {
+          "correct": 52,
+          "total": 154,
+          "acc": 0.33766233766233766
+        },
+        "spike": {
+          "correct": 20,
+          "total": 122,
+          "acc": 0.16393442622950818
+        }
+      }
+    },
+    "noise_argos.trend": {
+      "acc": 0.6442622950819672,
+      "correct": 393,
+      "total": 610,
+      "per_class": {
+        "down": {
+          "correct": 54,
+          "total": 124,
+          "acc": 0.43548387096774194
+        },
+        "noise": {
+          "correct": 120,
+          "total": 131,
+          "acc": 0.916030534351145
+        },
+        "other": {
+          "correct": 0,
+          "total": 1,
+          "acc": 0.0
+        },
+        "same_trend": {
+          "correct": 82,
+          "total": 169,
+          "acc": 0.48520710059171596
+        },
+        "spike": {
+          "correct": 52,
+          "total": 55,
+          "acc": 0.9454545454545454
+        },
+        "up": {
+          "correct": 85,
+          "total": 130,
+          "acc": 0.6538461538461539
+        }
+      }
+    },
+    "noise_kepler.trend": {
+      "acc": 0.5769230769230769,
+      "correct": 225,
+      "total": 390,
+      "per_class": {
+        "down": {
+          "correct": 97,
+          "total": 124,
+          "acc": 0.782258064516129
+        },
+        "same_trend": {
+          "correct": 41,
+          "total": 161,
+          "acc": 0.2546583850931677
+        },
+        "up": {
+          "correct": 87,
+          "total": 105,
+          "acc": 0.8285714285714286
+        }
+      }
+    }
+  }
+}
